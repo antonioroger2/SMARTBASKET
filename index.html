@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Smart Grocery Basket</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/quagga/0.12.1/quagga.min.js"></script>
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-app.js";
+import { getFirestore, doc, getDoc } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore.js";
+const firebaseConfig = {
+apiKey: "AIzaSyBEVutHD46Si_G9HNgzVPKAvaxmV0U-cME",
+authDomain: "smartgrocery-9f884.firebaseapp.com",
+databaseURL: "https://smartgrocery-9f884-default-rtdb.firebaseio.com",
+projectId: "smartgrocery-9f884",
+storageBucket: "smartgrocery-9f884.appspot.com",
+messagingSenderId: "983846952457",
+appId: "1:983846952457:web:2a7d254aafe06c34dd62d8"
+};
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+class GroceryBasket {
+constructor() {
+this.items = [];
+this.basketItemsEl = document.getElementById('basket-items');
+this.totalAmountEl = document.getElementById('total-amount');
+this.clearBasketBtn = document.getElementById('clear-basket');
+this.setupEventListeners();
+}
+setupEventListeners() {
+this.clearBasketBtn.addEventListener('click', () => this.clearBasket());
+}
+addItem(product) {
+const existingItem = this.items.find(item => item.id === product.id);
+if (existingItem) {
+existingItem.quantity++;
+} else {
+this.items.push({ ...product, quantity: 1 });
+}
+this.render();
+}
+removeItem(productId) {
+this.items = this.items.filter(item => item.id !== productId);
+this.render();
+}
+updateQuantity(productId, change) {
+const item = this.items.find(item => item.id === productId);
+if (item) {
+item.quantity += change;
+if (item.quantity <= 0) {
+this.removeItem(productId);
+}
+}
+this.render();
+}
+clearBasket() {
+this.items = [];
+this.render();
+}
+calculateTotal() {
+return this.items.reduce((total, item) => total + (item.price * item.quantity), 0);
+}
+render() {
+this.basketItemsEl.innerHTML = this.items.map(item => `
+<div class="d-flex align-items-center border-bottom py-2">
+<img src="${item.image}" alt="${item.name}" class="me-4" style="width: 64px; height: 64px; object-fit: cover;">
+<div class="flex-grow-1">
+<h3 class="mb-1">${item.name}</h3>
+<p class="text-muted">₹${item.price}</p>
+</div>
+<div class="d-flex align-items-center">
+<button onclick="handleQuantityChange('${item.id}', -1)" class="btn btn-sm btn-outline-secondary me-2">
+<i class="fas fa-minus"></i>
+</button>
+<span class="mx-2">${item.quantity}</span>
+<button onclick="handleQuantityChange('${item.id}', 1)" class="btn btn-sm btn-outline-secondary ms-2">
+<i class="fas fa-plus"></i>
+</button>
+</div>
+</div>
+`).join('');
+this.totalAmountEl.textContent = this.calculateTotal();
+}
+}
+class QRScanner {
+constructor(basket) {
+this.basket = basket;
+this.videoEl = document.getElementById('qr-scanner');
+this.canvasEl = document.getElementById('qr-canvas');
+this.startScanBtn = document.getElementById('start-scan');
+this.statusEl = document.getElementById('scanner-status');
+this.isScanning = true; // Declare isScanning at the class level
+this.setupEventListeners();
+}
+setupEventListeners() {
+this.startScanBtn.addEventListener('click', () => this.startScanning());
+}
+async startScanning() {
+try {
+const stream = await navigator.mediaDevices.getUserMedia({
+video: {
+facingMode: "environment",
+width: { ideal: 1280 },
+height: { ideal: 720 }
+}
+});
+this.videoEl.srcObject = stream;
+this.videoEl.setAttribute('playsinline', true);
+this.videoEl.play();
+this.canvasEl.classList.remove('d-none');
+this.statusEl.textContent = '';
+this.scanProductCode();
+} catch (error) {
+console.error("Error accessing camera:", error);
+this.statusEl.textContent = `Camera Error: ${error.message}`;
+}
+}
+scanProductCode() {
+const context = this.canvasEl.getContext('2d', { willReadFrequently: true });
+let lastScannedProductId = null;
+const scan = () => {
+if (!this.isScanning) return;
+if (this.videoEl.videoWidth === 0 || this.videoEl.videoHeight === 0) {
+requestAnimationFrame(scan);
+return;
+}
+this.canvasEl.width = this.videoEl.videoWidth;
+this.canvasEl.height = this.videoEl.videoHeight;
+context.drawImage(this.videoEl, 0, 0, this.canvasEl.width, this.canvasEl.height);
+const imageData = context.getImageData(0, 0, this.canvasEl.width, this.canvasEl.height);
+const qrCode = jsQR(imageData.data, imageData.width, imageData.height);
+if (qrCode && qrCode.data !== lastScannedProductId) {
+lastScannedProductId = qrCode.data;
+this.processProductScan(lastScannedProductId);
+} else {
+this.tryBarcodeScan(imageData);
+}
+requestAnimationFrame(scan);
+};
+scan();
+}
+tryBarcodeScan(imageData) {
+const context = this.canvasEl.getContext('2d');
+const barcodeCanvas = document.createElement('canvas');
+barcodeCanvas.width = imageData.width;
+barcodeCanvas.height = imageData.height;
+const barcodeContext = barcodeCanvas.getContext('2d');
+barcodeContext.putImageData(imageData, 0, 0);
+const base64Image = barcodeCanvas.toDataURL();
+Quagga.decodeSingle({
+src: base64Image,
+numOfWorkers: 0,
+decoder: {
+readers: ['code_128_reader', 'ean_reader', 'ean_8_reader', 'upc_reader']
+}
+}, result => {
+if (result && result.codeResult) {
+this.processProductScan(result.codeResult.code);
+}
+});
+}
+processProductScan(productId) {
+this.isScanning = false; // Stop scanning temporarily
+this.fetchProductDetails(productId)
+.then(() => {
+setTimeout(() => {
+this.isScanning = true; // Resume scanning
+}, 1500);
+})
+.catch(() => {
+this.isScanning = true; // Ensure scanning resumes on error
+});
+}
+async fetchProductDetails(productId) {
+try {
+const productRef = doc(db, "store-products", productId); // Adjust if necessary
+const docSnap = await getDoc(productRef);
+if (docSnap.exists()) {
+const product = docSnap.data();
+this.basket.addItem(product);
+this.statusEl.textContent = `Added: ${product.name}`;
+} else {
+this.statusEl.textContent = 'Unknown Product';
+}
+} catch (error) {
+console.error("Error fetching product:", error);
+this.statusEl.textContent = 'Error fetching product';
+}
+}
+}
+const basket = new GroceryBasket();
+const scanner = new QRScanner(basket);
+window.handleQuantityChange = function(productId, change) {
+basket.updateQuantity(productId, change);
+}
+</script>
+</head>
+<body class="bg-light">
+<div class="container py-4">
+<div class="row g-4">
+<div class="col-md-8">
+<div class="card">
+<div class="card-header d-flex justify-content-between align-items-center">
+<h2 class="h4 text-primary mb-0">Grocery Basket</h2>
+<button id="clear-basket" class="btn btn-outline-danger">
+<i class="fas fa-trash"></i>
+</button>
+</div>
+<div class="card-body">
+<div id="basket-items"></div>
+<div class="text-end mt-3">
+<h3 class="h5">Total: ₹<span id="total-amount">0</span></h3>
+</div>
+</div>
+</div>
+</div>
+<div class="col-md-4">
+<div class="card">
+<div class="card-body text-center">
+<div class="position-relative mb-3">
+<video id="qr-scanner" class="img-fluid rounded mb-3" autoplay playsinline></video>
+<canvas id="qr-canvas" class="position-absolute top-0 start-0 w-100 h-100 d-none"></canvas>
+</div>
+<div id="scanner-status" class="text-danger mb-2"></div>
+<button id="start-scan" class="btn btn-primary">
+<i class="fas fa-qrcode me-2"></i> Start Scanning
+</button>
+</div>
+</div>
+</div>
+</div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
